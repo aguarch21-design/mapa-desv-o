@@ -14,13 +14,19 @@ import {
   CheckCircle2,
   PencilLine,
   Sparkles,
-  Layers
+  Layers,
+  Bus,
+  Route,
+  Eye,
+  EyeOff,
+  ChevronDown
 } from 'lucide-react';
 import { 
   reverseGeocodeCoordinate, 
   buildDetourItineraryFromPath, 
   identifyBlockedStreets 
 } from '../utils/streetGeocoder';
+import { STM_BUS_ROUTES, STMBusLine } from '../data/stmRoutes';
 
 interface MapEditorProps {
   detour: DetourData;
@@ -33,7 +39,7 @@ type TileProvider = 'esri_street' | 'osm' | 'satellite';
 
 const TILE_PROVIDERS: Record<TileProvider, { name: string; url: string; attribution: string; maxZoom: number }> = {
   esri_street: {
-    name: 'Callejero Nítido (ESRI)',
+    name: 'Callejero Oficial (ESRI)',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
     attribution: '&copy; Esri, DeLorme, NAVTEQ, TomTom, OpenStreetMap',
     maxZoom: 19,
@@ -60,6 +66,7 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
   onChangeRef.current = onChange;
   
   // Layer groups to keep references clean
+  const busRoutesLayerRef = useRef<L.LayerGroup | null>(null);
   const blockedLayerRef = useRef<L.LayerGroup | null>(null);
   const detourLayerRef = useRef<L.LayerGroup | null>(null);
   const stopsLayerRef = useRef<L.LayerGroup | null>(null);
@@ -69,8 +76,13 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
   const [lastActionNotice, setLastActionNotice] = useState<string | null>(null);
   const [activeTile, setActiveTile] = useState<TileProvider>('esri_street');
   const [autoWriteItinerary, setAutoWriteItinerary] = useState<boolean>(true);
-  const [detectedStreets, setDetectedStreets] = useState<string[]>([]);
+  const [, setDetectedStreets] = useState<string[]>([]);
   const [isResolvingStreet, setIsResolvingStreet] = useState<boolean>(false);
+
+  // STM Bus Routes visualization state
+  const [showBusRoutes, setShowBusRoutes] = useState<boolean>(true);
+  const [busRouteFilter, setBusRouteFilter] = useState<'affected_only' | 'all' | string>('affected_only');
+  const [showRoutesLegend, setShowRoutesLegend] = useState<boolean>(true);
 
   // Initialize Map once
   useEffect(() => {
@@ -102,10 +114,13 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
 
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
+      // Layer ordering: Bus routes at bottom, then blocked, detour, and stops on top
+      const routesGroup = L.layerGroup().addTo(map);
       const blockedGroup = L.layerGroup().addTo(map);
       const detourGroup = L.layerGroup().addTo(map);
       const stopsGroup = L.layerGroup().addTo(map);
 
+      busRoutesLayerRef.current = routesGroup;
       blockedLayerRef.current = blockedGroup;
       detourLayerRef.current = detourGroup;
       stopsLayerRef.current = stopsGroup;
@@ -254,6 +269,104 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
     const map = leafletMapRef.current;
     if (!map) return;
 
+    // 0. Redraw STM Bus Lines
+    if (busRoutesLayerRef.current) {
+      busRoutesLayerRef.current.clearLayers();
+
+      if (showBusRoutes) {
+        const allRoutes = Object.values(STM_BUS_ROUTES);
+        const filteredRoutes = allRoutes.filter((route) => {
+          if (busRouteFilter === 'all') return true;
+          if (busRouteFilter === 'affected_only') {
+            return detour.affectedLines.length > 0
+              ? detour.affectedLines.includes(route.id)
+              : ['104', '180', '21', '60'].includes(route.id);
+          }
+          return route.id === busRouteFilter;
+        });
+
+        filteredRoutes.forEach((busLine) => {
+          const isAffected = detour.affectedLines.includes(busLine.id);
+
+          // Route polyline with clean styling
+          const routePoly = L.polyline(busLine.route, {
+            color: busLine.routeColor,
+            weight: isAffected ? 5 : 3.5,
+            opacity: isAffected ? 0.95 : 0.65,
+            dashArray: isAffected ? undefined : '5, 8',
+            lineJoin: 'round',
+          });
+
+          const popupContent = `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 4px; min-width: 220px">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                <span style="background: ${busLine.companyColor}; color: #ffffff; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; letter-spacing: 0.5px">
+                  ${busLine.name}
+                </span>
+                <span style="font-size: 11px; font-weight: 700; color: #334155">${busLine.company}</span>
+              </div>
+              <div style="font-size: 12px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">
+                ${busLine.origin} ⇄ ${busLine.destination}
+              </div>
+              <div style="font-size: 11px; color: #475569; line-height: 1.4; margin-bottom: 6px;">
+                <b>Corredor Habitual:</b> ${busLine.corridor}
+              </div>
+              ${isAffected ? `
+                <div style="background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 4px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;">
+                  ⚠️ Línea Oficialmente Afectada por esta Resolución
+                </div>
+              ` : `
+                <div style="font-size: 10px; color: #64748b;">
+                  Frecuencia normal: cada ${busLine.frequencyMinutes} min aprox.
+                </div>
+              `}
+            </div>
+          `;
+
+          routePoly.bindTooltip(`🚌 ${busLine.name} (${busLine.company}): ${busLine.origin} ⇄ ${busLine.destination}`, {
+            sticky: true,
+          });
+          routePoly.bindPopup(popupContent);
+
+          busRoutesLayerRef.current?.addLayer(routePoly);
+
+          // Terminus markers
+          const startPt = busLine.route[0];
+          const endPt = busLine.route[busLine.route.length - 1];
+
+          if (startPt) {
+            const startIcon = L.divIcon({
+              className: 'custom-route-start',
+              html: `
+                <div style="background: ${busLine.companyColor}; color: white; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 900; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.35);">
+                  ${busLine.id.slice(0, 3)}
+                </div>
+              `,
+              iconSize: [22, 22],
+            });
+            const startMarker = L.marker(startPt, { icon: startIcon });
+            startMarker.bindTooltip(`Cabecera ${busLine.name}: ${busLine.origin}`);
+            busRoutesLayerRef.current?.addLayer(startMarker);
+          }
+
+          if (endPt) {
+            const endIcon = L.divIcon({
+              className: 'custom-route-end',
+              html: `
+                <div style="background: ${busLine.companyColor}; color: white; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 900; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.35);">
+                  ${busLine.id.slice(0, 3)}
+                </div>
+              `,
+              iconSize: [22, 22],
+            });
+            const endMarker = L.marker(endPt, { icon: endIcon });
+            endMarker.bindTooltip(`Destino ${busLine.name}: ${busLine.destination}`);
+            busRoutesLayerRef.current?.addLayer(endMarker);
+          }
+        });
+      }
+    }
+
     // 1. Redraw blocked path
     if (blockedLayerRef.current) {
       blockedLayerRef.current.clearLayers();
@@ -377,13 +490,21 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
         stopsLayerRef.current?.addLayer(marker);
       });
     }
-  }, [detour.blockedPath, detour.detourPath, detour.stops]);
+  }, [detour.blockedPath, detour.detourPath, detour.stops, detour.affectedLines, showBusRoutes, busRouteFilter]);
 
   const showNotice = (msg: string) => {
     setLastActionNotice(msg);
     setTimeout(() => {
       setLastActionNotice(null);
     }, 3000);
+  };
+
+  const focusBusLine = (busLine: STMBusLine) => {
+    const map = leafletMapRef.current;
+    if (!map || busLine.route.length === 0) return;
+    const poly = L.polyline(busLine.route);
+    map.fitBounds(poly.getBounds().pad(0.25), { duration: 1.2 });
+    showNotice(`Centrado en: ${busLine.name} (${busLine.origin} ⇄ ${busLine.destination})`);
   };
 
   const jumpToLocation = (preset: typeof MONTEVIDEO_PRESETS[0]) => {
@@ -534,14 +655,14 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
           </button>
         </div>
 
-        {/* Undo, Layers and Presets */}
-        <div className="flex items-center gap-2">
+        {/* Undo, STM Routes, Layers and Presets */}
+        <div className="flex items-center gap-2 flex-wrap">
           {drawMode !== 'view' && (
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={handleUndo}
-                className="p-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 text-xs flex items-center gap-1"
+                className="p-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 text-xs flex items-center gap-1 cursor-pointer"
                 title="Deshacer último punto"
               >
                 <Undo2 className="w-3.5 h-3.5" />
@@ -550,7 +671,7 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
               <button
                 type="button"
                 onClick={handleClearCurrent}
-                className="p-1.5 rounded-md text-slate-600 hover:text-red-700 hover:bg-red-50 border border-slate-200 text-xs flex items-center gap-1"
+                className="p-1.5 rounded-md text-slate-600 hover:text-red-700 hover:bg-red-50 border border-slate-200 text-xs flex items-center gap-1 cursor-pointer"
                 title="Limpiar capa activa"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -559,13 +680,53 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
             </div>
           )}
 
+          {/* STM Bus Routes Layer Selector & Toggle */}
+          <div className="flex items-center gap-1 bg-blue-50/80 border border-blue-200 px-2 py-1 rounded-lg text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !showBusRoutes;
+                setShowBusRoutes(next);
+                showNotice(next ? '🚌 Recorridos STM activados' : 'Recorridos STM ocultos');
+              }}
+              className={`flex items-center gap-1 font-bold px-1.5 py-0.5 rounded transition cursor-pointer ${
+                showBusRoutes ? 'bg-blue-700 text-white shadow-xs' : 'text-blue-900 hover:bg-blue-100'
+              }`}
+              title="Mostrar u ocultar los recorridos habituales de las líneas en el mapa"
+            >
+              <Bus className="w-3.5 h-3.5" />
+              <span>{showBusRoutes ? 'Líneas STM: ON' : 'Líneas: OFF'}</span>
+            </button>
+
+            {showBusRoutes && (
+              <select
+                value={busRouteFilter}
+                onChange={(e) => setBusRouteFilter(e.target.value)}
+                className="bg-white border border-blue-300 text-blue-950 font-medium text-[11px] rounded px-1.5 py-0.5 focus:outline-none"
+                title="Filtrar qué recorridos mostrar sobre el mapa"
+              >
+                <option value="affected_only">
+                  Líneas afectadas ({detour.affectedLines.length || 'Sugeridas'})
+                </option>
+                <option value="all">Todas las líneas STM</option>
+                <optgroup label="Líneas Individuales">
+                  {Object.values(STM_BUS_ROUTES).map((line) => (
+                    <option key={line.id} value={line.id}>
+                      {line.name} ({line.company}) - {line.corridor.split('•')[0]}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            )}
+          </div>
+
           {/* Clean Map Layer Selector (No API Keys / No Watermarks) */}
           <div className="flex items-center gap-0.5 bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[11px]">
             <Layers className="w-3.5 h-3.5 text-slate-500 mx-1 hidden sm:inline" />
             <button
               type="button"
               onClick={() => switchTileProvider('esri_street')}
-              className={`px-1.5 py-0.5 rounded transition ${
+              className={`px-1.5 py-0.5 rounded transition cursor-pointer ${
                 activeTile === 'esri_street' ? 'bg-white shadow-xs text-blue-700 font-bold' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Callejero oficial ESRI nítido sin marcas de agua"
@@ -575,7 +736,7 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
             <button
               type="button"
               onClick={() => switchTileProvider('osm')}
-              className={`px-1.5 py-0.5 rounded transition ${
+              className={`px-1.5 py-0.5 rounded transition cursor-pointer ${
                 activeTile === 'osm' ? 'bg-white shadow-xs text-blue-700 font-bold' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="OpenStreetMap estándar"
@@ -585,7 +746,7 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
             <button
               type="button"
               onClick={() => switchTileProvider('satellite')}
-              className={`px-1.5 py-0.5 rounded transition ${
+              className={`px-1.5 py-0.5 rounded transition cursor-pointer ${
                 activeTile === 'satellite' ? 'bg-white shadow-xs text-blue-700 font-bold' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Fotografía aérea satelital"
@@ -688,6 +849,76 @@ export function MapEditor({ detour, onChange, mapRefProp }: MapEditorProps) {
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] bg-slate-900/90 text-white px-3 py-1.5 rounded-full text-xs shadow-lg flex items-center gap-2 backdrop-blur-sm animate-fade-in">
           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
           <span>{lastActionNotice}</span>
+        </div>
+      )}
+
+      {/* Floating Active Bus Routes Panel (top right overlay) */}
+      {showBusRoutes && (
+        <div className="absolute top-28 right-3 z-[1000] bg-white/95 backdrop-blur-md p-2.5 rounded-lg border border-slate-200 shadow-md text-xs max-w-[240px] pointer-events-auto">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-1.5 mb-1.5">
+            <span className="font-bold text-slate-800 flex items-center gap-1">
+              <Bus className="w-3.5 h-3.5 text-blue-700" />
+              Líneas en Mapa
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowRoutesLegend(!showRoutesLegend)}
+              className="text-slate-400 hover:text-slate-700 text-[10px] uppercase font-bold cursor-pointer"
+            >
+              {showRoutesLegend ? 'Ocultar' : 'Ver'}
+            </button>
+          </div>
+
+          {showRoutesLegend && (
+            <div className="space-y-1 max-h-[160px] overflow-y-auto pr-1">
+              {Object.values(STM_BUS_ROUTES)
+                .filter((r) => {
+                  if (busRouteFilter === 'all') return true;
+                  if (busRouteFilter === 'affected_only') {
+                    return detour.affectedLines.length > 0
+                      ? detour.affectedLines.includes(r.id)
+                      : ['104', '180', '21', '60'].includes(r.id);
+                  }
+                  return r.id === busRouteFilter;
+                })
+                .map((line) => {
+                  const isAffected = detour.affectedLines.includes(line.id);
+                  return (
+                    <button
+                      key={line.id}
+                      type="button"
+                      onClick={() => focusBusLine(line)}
+                      className={`w-full text-left px-1.5 py-1 rounded flex items-center justify-between gap-1.5 transition cursor-pointer group ${
+                        isAffected ? 'bg-red-50/70 hover:bg-red-100/70' : 'hover:bg-slate-100'
+                      }`}
+                      title={`Clic para centrar mapa en Línea ${line.id} (${line.corridor})`}
+                    >
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                          style={{ backgroundColor: line.routeColor }}
+                        />
+                        <span className="font-bold text-slate-900 text-[11px] group-hover:text-blue-700">
+                          {line.id}
+                        </span>
+                        <span className="text-[10px] text-slate-500 truncate">
+                          {line.company}
+                        </span>
+                      </div>
+                      {isAffected ? (
+                        <span className="bg-red-600 text-white text-[9px] font-bold px-1 rounded shrink-0">
+                          Afectada
+                        </span>
+                      ) : (
+                        <span className="text-[9px] text-slate-400 group-hover:text-blue-600">
+                          Centrar
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+            </div>
+          )}
         </div>
       )}
 

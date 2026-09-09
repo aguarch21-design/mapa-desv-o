@@ -1,19 +1,23 @@
 import { useState, FormEvent } from 'react';
 import { DetourData, DetourDirection } from '../types';
-import { POPULAR_STM_LINES } from '../data/montevideo';
+import { POPULAR_STM_LINES, BUS_COMPANIES } from '../data/montevideo';
+import { STM_BUS_ROUTES } from '../data/stmRoutes';
 import { 
   Bus, 
   Calendar, 
   Clock, 
-  Tag, 
   AlertTriangle, 
   Plus, 
   X, 
   FileText, 
-  Sparkles,
-  MapPin,
-  Trash2,
-  Loader2
+  Sparkles, 
+  MapPin, 
+  Trash2, 
+  Loader2,
+  Building2,
+  CheckCircle,
+  FileCheck2,
+  Info
 } from 'lucide-react';
 import { buildDetourItineraryFromPath } from '../utils/streetGeocoder';
 
@@ -25,6 +29,7 @@ interface DetourFormProps {
 export function DetourForm({ detour, onChange }: DetourFormProps) {
   const [customLineInput, setCustomLineInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [companyFilter, setCompanyFilter] = useState<'all' | 'CUTCSA' | 'COETC' | 'UCOT' | 'COME'>('all');
 
   const addLine = (line: string) => {
     const trimmed = line.trim().toUpperCase();
@@ -65,15 +70,15 @@ export function DetourForm({ detour, onChange }: DetourFormProps) {
       }
 
       if (!itineraryCore) {
-        itineraryCore = `${direction} (${lines}): Desvío por corte en ${streets}. Circulan por ruta habitual hasta la última parada previa al corte, desviando por calles paralelas y adyacentes hasta retomar recorrido oficial.`;
+        itineraryCore = `${direction} (${lines}): Desvío por corte de calzada en ${streets}. Circulan por ruta reglamentaria hasta la última parada previa a la zona de corte, desviando por calles transversales y paralelas hasta retomar el itinerario oficial.`;
       }
 
       let text = itineraryCore;
       if (provisorias.length > 0 && !text.includes('habilitan paradas')) {
-        text += ` Se habilitan paradas provisorias en: ${provisorias.map((s) => s.name).join('; ')}.`;
+        text += ` Se autorizan paradas provisorias en: ${provisorias.map((s) => s.name).join('; ')}.`;
       }
       if (suprimidas.length > 0 && !text.includes('suprimidas las paradas')) {
-        text += ` Quedan temporalmente suprimidas las paradas habituales de: ${suprimidas.map((s) => s.name).join('; ')}.`;
+        text += ` Quedan temporalmente suprimidas las paradas ordinarias de: ${suprimidas.map((s) => s.name).join('; ')}.`;
       }
 
       onChange({ detourDescription: text });
@@ -83,280 +88,344 @@ export function DetourForm({ detour, onChange }: DetourFormProps) {
   };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-5">
-      <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-        <div className="flex items-center gap-2">
-          <FileText className="w-5 h-5 text-blue-600" />
-          <h2 className="text-base font-bold text-slate-800">
-            Ficha Técnica del Desvío
-          </h2>
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden space-y-0">
+      {/* Formal Header Banner */}
+      <div className="bg-[#0b192c] text-white p-4 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-blue-600/30 border border-blue-400/40 flex items-center justify-center text-blue-400 font-bold">
+            <FileCheck2 className="w-4 h-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold tracking-tight text-white uppercase">
+              Expediente Técnico de Desvío
+            </h2>
+            <p className="text-[11px] text-slate-400">
+              Resolución Oficial • Departamento de Movilidad • Intendencia de Montevideo
+            </p>
+          </div>
         </div>
-        <div className="text-xs font-mono font-bold px-2 py-1 bg-slate-100 text-slate-700 rounded border border-slate-200">
-          {detour.code}
-        </div>
-      </div>
-
-      {/* Título & Motivo */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">
-            Título del Comunicado Oficial *
-          </label>
-          <input
-            type="text"
-            value={detour.title}
-            onChange={(e) => onChange({ title: e.target.value })}
-            placeholder="Ej: Desvío en Av. 18 de Julio por Reparación de Calzada"
-            className="w-full text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">
-            Motivo / Causa del Corte *
-          </label>
-          <input
-            type="text"
-            value={detour.reason}
-            onChange={(e) => onChange({ reason: e.target.value })}
-            placeholder="Ej: Obras de saneamiento OSE / Evento maratón Montevideo"
-            className="w-full text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition"
-          />
+        <div className="text-right">
+          <span className="text-[10px] text-slate-400 uppercase font-semibold block">Actuación N°</span>
+          <span className="text-xs font-mono font-black text-amber-400 tracking-wider">
+            {detour.code}
+          </span>
         </div>
       </div>
 
-      {/* Líneas de Bus Afectadas */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-            <Bus className="w-3.5 h-3.5 text-blue-600" />
-            Líneas de Buses Afectadas ({detour.affectedLines.length})
-          </label>
-          <span className="text-[11px] text-slate-400">Selecciona o escribe una línea</span>
-        </div>
-
-        {/* Selected Lines Chips */}
-        <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2 bg-slate-50 border border-slate-200 rounded-lg mb-2">
-          {detour.affectedLines.length === 0 ? (
-            <span className="text-xs text-slate-400 italic">No hay líneas seleccionadas todavía</span>
-          ) : (
-            detour.affectedLines.map((line) => (
-              <span
-                key={line}
-                className="inline-flex items-center gap-1 bg-blue-600 text-white text-xs font-bold px-2 py-1 rounded-md shadow-xs"
-              >
-                {line}
-                <button
-                  type="button"
-                  onClick={() => removeLine(line)}
-                  className="hover:bg-blue-700 rounded p-0.5"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))
-          )}
-        </div>
-
-        {/* Quick select STM lines */}
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="text-[11px] text-slate-500 mr-1">Rápidas:</span>
-          {POPULAR_STM_LINES.slice(0, 10).map((line) => {
-            const isSelected = detour.affectedLines.includes(line);
-            return (
-              <button
-                key={line}
-                type="button"
-                onClick={() => (isSelected ? removeLine(line) : addLine(line))}
-                className={`px-2 py-0.5 text-xs font-medium rounded transition ${
-                  isSelected
-                    ? 'bg-blue-100 text-blue-800 border border-blue-300 font-bold'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                }`}
-              >
-                {line}
-              </button>
-            );
-          })}
-
-          {/* Custom line input */}
-          <form onSubmit={handleAddCustomLine} className="inline-flex items-center ml-2">
-            <input
-              type="text"
-              placeholder="Otra línea..."
-              value={customLineInput}
-              onChange={(e) => setCustomLineInput(e.target.value)}
-              className="text-xs px-2 py-1 w-24 border border-slate-200 rounded-l bg-slate-50 focus:bg-white focus:outline-none"
-            />
-            <button
-              type="submit"
-              className="bg-slate-800 hover:bg-slate-900 text-white px-2 py-1 text-xs rounded-r font-medium flex items-center"
-            >
-              <Plus className="w-3 h-3" />
-            </button>
-          </form>
-        </div>
-      </div>
-
-      {/* Sentido y Fechas */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">
-            Sentido de Circulación
-          </label>
-          <select
-            value={detour.direction}
-            onChange={(e) => onChange({ direction: e.target.value as DetourDirection })}
-            className="w-full text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
-          >
-            <option value="hacia_centro">Hacia el Centro / Plaza Independencia</option>
-            <option value="hacia_afuera">Hacia Afuera / Suburbios</option>
-            <option value="ambos">En Ambos Sentidos</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1">
-            <Calendar className="w-3.5 h-3.5 text-slate-500" />
-            Fecha y Hora de Inicio
-          </label>
-          <input
-            type="datetime-local"
-            value={detour.startDate}
-            onChange={(e) => onChange({ startDate: e.target.value })}
-            className="w-full text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5 text-slate-500" />
-            Fecha y Hora de Finalización
-          </label>
-          <input
-            type="datetime-local"
-            value={detour.endDate}
-            onChange={(e) => onChange({ endDate: e.target.value })}
-            className="w-full text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
-          />
-        </div>
-      </div>
-
-      {/* Tramo cortado */}
-      <div>
-        <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
-          <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-          Calles Interrumpidas / Tramo Afectado
-        </label>
-        <input
-          type="text"
-          value={detour.affectedStreets}
-          onChange={(e) => onChange({ affectedStreets: e.target.value })}
-          placeholder="Ej: Av. 18 de Julio entre Río Negro y Julio Herrera y Obes"
-          className="w-full text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
-        />
-      </div>
-
-      {/* Descripción del desvío */}
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="text-xs font-semibold text-slate-700">
-            Detalle del Recorrido Provisorio (Paso a paso)
-          </label>
-          <button
-            type="button"
-            disabled={isGenerating}
-            onClick={autoGenerateDescription}
-            className="text-xs text-blue-600 hover:text-blue-800 disabled:text-slate-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span>Geocodificando y redactando...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3 h-3" />
-                <span>Autogenerar redacción técnica</span>
-              </>
-            )}
-          </button>
-        </div>
-        <textarea
-          rows={3}
-          value={detour.detourDescription}
-          onChange={(e) => onChange({ detourDescription: e.target.value })}
-          placeholder="Ej: ...su ruta habitual, desvía por calle Río Negro, San José, Paraguay, retoma Av. 18 de Julio..."
-          className="w-full text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
-        />
-      </div>
-
-      {/* Paradas en lista */}
-      {detour.stops.length > 0 && (
-        <div className="pt-2 border-t border-slate-100">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5 text-slate-600" />
-              Paradas Mapeadas ({detour.stops.length})
-            </span>
-            <span className="text-[11px] text-slate-400">Puedes editarlas o eliminarlas</span>
+      <div className="p-5 space-y-5">
+        {/* I. ACTO ADMINISTRATIVO */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="text-blue-700 font-black">I.</span> Identificación del Acto Administrativo
+            </h3>
+            <span className="text-[10px] font-semibold text-slate-400 uppercase">Validez Municipal</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-            {detour.stops.map((stop) => {
-              const isSuprimida = stop.type === 'suprimida';
-              return (
-                <div
-                  key={stop.id}
-                  className={`flex items-center justify-between p-2 rounded-lg border text-xs ${
-                    isSuprimida
-                      ? 'bg-rose-50/60 border-rose-200 text-rose-900'
-                      : 'bg-blue-50/60 border-blue-200 text-blue-900'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 overflow-hidden">
-                    <span className="text-sm">{isSuprimida ? '🚫' : '🚏'}</span>
-                    <input
-                      type="text"
-                      value={stop.name}
-                      onChange={(e) => {
-                        const updatedStops = detour.stops.map((s) =>
-                          s.id === stop.id ? { ...s, name: e.target.value } : s
-                        );
-                        onChange({ stops: updatedStops });
-                      }}
-                      className="text-xs bg-transparent border-b border-dashed border-current focus:outline-none focus:bg-white px-1 font-medium w-full"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onChange({ stops: detour.stops.filter((s) => s.id !== stop.id) });
-                    }}
-                    className="p-1 text-slate-400 hover:text-red-600 transition"
-                    title="Eliminar parada"
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Título Oficial de la Intervención *
+              </label>
+              <input
+                type="text"
+                value={detour.title}
+                onChange={(e) => onChange({ title: e.target.value })}
+                placeholder="Ej: Desvío en Av. 18 de Julio por Reparación de Calzada"
+                className="w-full text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-1 focus:ring-blue-600 focus:border-blue-600 focus:outline-none transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Motivo Técnico / Causa del Corte *
+              </label>
+              <input
+                type="text"
+                value={detour.reason}
+                onChange={(e) => onChange({ reason: e.target.value })}
+                placeholder="Ej: Obras viales y fresado de carpeta asfáltica por parte de la IM"
+                className="w-full text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-1 focus:ring-blue-600 focus:border-blue-600 focus:outline-none transition"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* II. EMPRESAS Y LÍNEAS AFECTADAS */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="text-blue-700 font-black">II.</span> Empresas y Líneas Notificadas ({detour.affectedLines.length})
+            </h3>
+            <span className="text-[10px] font-semibold text-blue-700">Trazado visible en el mapa</span>
+          </div>
+
+          {/* Selected Lines Chips */}
+          <div className="min-h-[42px] p-2 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap gap-1.5 items-center">
+            {detour.affectedLines.length === 0 ? (
+              <span className="text-xs text-slate-400 italic">
+                Seleccione las líneas afectadas por este desvío desde el panel inferior...
+              </span>
+            ) : (
+              detour.affectedLines.map((line) => {
+                const routeInfo = STM_BUS_ROUTES[line];
+                const company = routeInfo?.company || 'STM';
+                return (
+                  <span
+                    key={line}
+                    className="inline-flex items-center gap-1.5 bg-blue-900 text-white text-xs font-bold px-2 py-1 rounded-md shadow-xs border border-blue-800"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                    <span>Línea {line}</span>
+                    <span className="bg-blue-800 text-blue-200 text-[9px] px-1 py-0.2 rounded font-normal">
+                      {company}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeLine(line)}
+                      className="hover:bg-blue-800 rounded p-0.5 text-blue-300 hover:text-white cursor-pointer"
+                      title={`Quitar línea ${line}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              })
+            )}
+          </div>
+
+          {/* Quick Select Filter by Concessionaire */}
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            <span className="text-[11px] font-bold text-slate-500 mr-1 flex items-center gap-1">
+              <Building2 className="w-3 h-3 text-slate-400" />
+              Líneas Frecuentes:
+            </span>
+            {POPULAR_STM_LINES.map((line) => {
+              const isSelected = detour.affectedLines.includes(line);
+              const routeInfo = STM_BUS_ROUTES[line];
+              return (
+                <button
+                  key={line}
+                  type="button"
+                  onClick={() => (isSelected ? removeLine(line) : addLine(line))}
+                  className={`px-2 py-0.5 text-xs font-semibold rounded transition cursor-pointer ${
+                    isSelected
+                      ? 'bg-blue-700 text-white shadow-xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                  }`}
+                  title={routeInfo ? `${routeInfo.name} (${routeInfo.company}): ${routeInfo.corridor}` : `Línea ${line}`}
+                >
+                  {line}
+                </button>
               );
             })}
+
+            {/* Custom line input */}
+            <form onSubmit={handleAddCustomLine} className="inline-flex items-center ml-2">
+              <input
+                type="text"
+                placeholder="Otra línea..."
+                value={customLineInput}
+                onChange={(e) => setCustomLineInput(e.target.value)}
+                className="text-xs px-2 py-1 w-24 border border-slate-200 rounded-l bg-slate-50 focus:bg-white focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-slate-800 hover:bg-slate-900 text-white px-2 py-1 text-xs rounded-r font-bold flex items-center cursor-pointer"
+                title="Agregar línea"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+            </form>
+          </div>
+
+          <div className="bg-blue-50/70 border border-blue-200/80 rounded-lg p-2.5 flex items-start gap-2 text-xs text-blue-900">
+            <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+            <p className="text-[11px] leading-relaxed">
+              Las líneas seleccionadas se sincronizan automáticamente con la cartografía: sus recorridos habituales se visualizan en el mapa para que el inspector o técnico verifique la coherencia del desvío alternativo.
+            </p>
           </div>
         </div>
-      )}
 
-      {/* Observaciones Generales */}
-      <div>
-        <label className="block text-xs font-semibold text-slate-700 mb-1">
-          Observaciones Adicionales / Instrucciones a Empresas de Transporte
-        </label>
-        <textarea
-          rows={2}
-          value={detour.observations}
-          onChange={(e) => onChange({ observations: e.target.value })}
-          placeholder="Instrucciones para inspectores, cooperativas (CUTCSA, COETC, UCOT), y difusión al usuario."
-          className="w-full text-sm px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
-        />
+        {/* III. SENTIDO Y CRONOGRAMA */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="text-blue-700 font-black">III.</span> Sentido Operativo y Vigencia
+            </h3>
+            <span className="text-[10px] font-semibold text-slate-400 uppercase">Período del Desvío</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Sentido de Circulación
+              </label>
+              <select
+                value={detour.direction}
+                onChange={(e) => onChange({ direction: e.target.value as DetourDirection })}
+                className="w-full text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none cursor-pointer"
+              >
+                <option value="hacia_centro">Hacia el Centro / Plaza Independencia</option>
+                <option value="hacia_afuera">Hacia Afuera / Suburbios</option>
+                <option value="ambos">En Ambos Sentidos</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                Fecha y Hora de Inicio
+              </label>
+              <input
+                type="datetime-local"
+                value={detour.startDate}
+                onChange={(e) => onChange({ startDate: e.target.value })}
+                className="w-full text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-slate-500" />
+                Fecha y Hora de Culminación
+              </label>
+              <input
+                type="datetime-local"
+                value={detour.endDate}
+                onChange={(e) => onChange({ endDate: e.target.value })}
+                className="w-full text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* IV. TRAMO INTERVENIDO E ITINERARIO PROVISORIO */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="text-blue-700 font-black">IV.</span> Tramo Intervenido e Itinerario Provisorio
+            </h3>
+            <span className="text-[10px] font-semibold text-slate-400 uppercase">Cartografía Oficial</span>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+              Calles Clausuradas / Tramo Interrumpido
+            </label>
+            <input
+              type="text"
+              value={detour.affectedStreets}
+              onChange={(e) => onChange({ affectedStreets: e.target.value })}
+              placeholder="Ej: Av. 18 de Julio entre Río Negro y Julio Herrera y Obes"
+              className="w-full text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-bold text-slate-700">
+                Itinerario Oficial Provisorio (Redacción técnica paso a paso)
+              </label>
+              <button
+                type="button"
+                disabled={isGenerating}
+                onClick={autoGenerateDescription}
+                className="text-xs text-blue-700 hover:text-blue-900 font-bold flex items-center gap-1 hover:underline cursor-pointer disabled:opacity-50"
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                    <span>Geocodificando y redactando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3 h-3 text-blue-600" />
+                    <span>Redactar desde trazado del mapa</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <textarea
+              rows={3}
+              value={detour.detourDescription}
+              onChange={(e) => onChange({ detourDescription: e.target.value })}
+              placeholder="Ej: Hacia Centro: Av. 18 de Julio, Río Negro, San José, Paraguay, retomando Av. 18 de Julio a su recorrido habitual..."
+              className="w-full text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none leading-relaxed"
+            />
+          </div>
+        </div>
+
+        {/* V. RÉGIMEN DE PARADAS */}
+        {detour.stops.length > 0 && (
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="text-blue-700 font-black">V.</span> Paradas Intervenidas ({detour.stops.length})
+              </h3>
+              <span className="text-[10px] text-slate-400 font-medium">Suprimidas y provisorias autorizadas</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+              {detour.stops.map((stop) => {
+                const isSuprimida = stop.type === 'suprimida';
+                return (
+                  <div
+                    key={stop.id}
+                    className={`flex items-center justify-between p-2 rounded-lg border text-xs ${
+                      isSuprimida
+                        ? 'bg-red-50/70 border-red-200 text-red-950'
+                        : 'bg-blue-50/70 border-blue-200 text-blue-950'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 overflow-hidden flex-1">
+                      <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
+                        isSuprimida ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'
+                      }`}>
+                        {isSuprimida ? 'Suprimida' : 'Provisoria'}
+                      </span>
+                      <input
+                        type="text"
+                        value={stop.name}
+                        onChange={(e) => {
+                          const updatedStops = detour.stops.map((s) =>
+                            s.id === stop.id ? { ...s, name: e.target.value } : s
+                          );
+                          onChange({ stops: updatedStops });
+                        }}
+                        className="text-xs bg-transparent border-b border-dashed border-slate-400 focus:outline-none focus:bg-white px-1 font-medium w-full"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onChange({ stops: detour.stops.filter((s) => s.id !== stop.id) });
+                      }}
+                      className="p-1 text-slate-400 hover:text-red-600 transition ml-1 cursor-pointer"
+                      title="Eliminar parada"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* VI. DISPOSICIONES AL CUERPO INSPECTIVO */}
+        <div className="space-y-2 pt-2 border-t border-slate-100">
+          <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+            <span className="text-blue-700 font-black">VI.</span> Instrucciones Operativas al Cuerpo Inspectivo y Empresas
+          </label>
+          <textarea
+            rows={2}
+            value={detour.observations}
+            onChange={(e) => onChange({ observations: e.target.value })}
+            placeholder="Instrucciones para inspectores de tránsito en vía pública, personal de conducción de las cooperativas (CUTCSA, COETC, UCOT, COME) y señalización de paradas provisorias."
+            className="w-full text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none"
+          />
+        </div>
       </div>
     </div>
   );
