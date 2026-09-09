@@ -1,0 +1,8 @@
+{
+  "name": "Desvíos de Buses Montevideo",
+  "description": "Generador interactivo de desvíos de buses sobre el mapa de Montevideo con generación automática de avisos en PDF y envío directo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
